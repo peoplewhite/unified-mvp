@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+
+{% block title %}Unified MVP - 首頁{% endblock %}
+
+{% block content %}
+<div class="hero-section">
+    <h1 class="hero-title">🎯 統一 AI 商業工具平台</h1>
+    <p class="hero-subtitle">整合供應商搜尋與企業信用評估的強大工具組</p>
+</div>
+
+<div class="cards-container">
+    <!-- Vendor Scout Card -->
+    <div class="feature-card">
+        <div class="card-icon">🌏</div>
+        <h2 class="card-title">AI Global Vendor Scout</h2>
+        <p class="card-description">
+            搜尋全球供應商，快速找到符合需求的廠商。<br>
+            支援關鍵字搜尋、國家篩選，並可匯出 Excel/PDF 報告。
+        </p>
+        <ul class="feature-list">
+            <li>✅ 關鍵字 + 國家篩選</li>
+            <li>✅ 評分與匹配度分析</li>
+            <li>✅ Excel/PDF 匯出</li>
+        </ul>
+        <a href="/vendor" class="btn btn-primary">開始搜尋廠商</a>
+    </div>
+
+    <!-- Credit Scout Card -->
+    <div class="feature-card">
+        <div class="card-icon">🏢</div>
+        <h2 class="card-title">AI SME Credit Scout</h2>
+        <p class="card-description">
+            企業信用風險評估，為您的商業決策提供數據支持。<br>
+            分析財務健康度、信用評分，產出專業風險報告。
+        </p>
+        <ul class="feature-list">
+            <li>✅ 信用評分分析</li>
+            <li>✅ 財務健康度評估</li>
+            <li>✅ PDF 報告下載</li>
+        </ul>
+        <a href="/credit" class="btn btn-secondary">開始信用評估</a>
+    </div>
+</div>
+
+<div class="info-section">
+    <h3>📋 使用說明</h3>
+    <div class="info-grid">
+        <div class="info-item">
+            <strong>🎮 Mock 模式</strong>
+            <p>目前運行於 Mock 模式，無需 API Key 即可體驗完整功能。</p>
+        </div>
+        <div class="info-item">
+            <strong>⚡ 快速開始</strong>
+            <p>選擇上方工具卡片，輸入搜尋條件即可開始使用。</p>
+        </div>
+        <div class="info-item">
+            <strong>📊 報告匯出</strong>
+            <p>所有搜尋結果均可匯出為專業格式的報告文件。</p>
+        </div>
+    </div>
+</div>
+{% endblock %}

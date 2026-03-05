@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+
+{% block title %}Credit Scout - 企業信用評估{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>🏢 AI SME Credit Scout</h1>
+    <p>智能企業信用風險評估，為您的商業決策把關</p>
+</div>
+
+<div class="tool-container">
+    <!-- Search Form -->
+    <div class="search-panel">
+        <h2>輸入公司名稱</h2>
+        <form id="credit-search-form" class="search-form">
+            <div class="form-group">
+                <label for="company-name">公司名稱 *</label>
+                <input type="text" id="company-name" name="company_name" placeholder="例如: ABC Manufacturing Ltd" required>
+                <small>輸入完整公司名稱以獲得準確分析</small>
+            </div>
+            
+            <button type="submit" class="btn btn-secondary btn-large">
+                <span class="btn-icon">📊</span> 分析信用風險
+            </button>
+        </form>
+    </div>
+
+    <!-- Results Section -->
+    <div id="results-section" class="results-panel" style="display: none;">
+        <div class="results-header">
+            <h2>信用評估報告</h2>
+            <button id="download-pdf" class="btn btn-outline">
+                📄 下載 PDF 報告
+            </button>
+        </div>
+        
+        <div id="results-content">
+            <!-- Results will be populated by JavaScript -->
+        </div>
+    </div>
+
+    <!-- Loading State -->
+    <div id="loading-state" class="loading-panel" style="display: none;">
+        <div class="spinner"></div>
+        <p>正在分析公司信用風險...</p>
+    </div>
+
+    <!-- Info Cards -->
+    <div class="info-cards">
+        <div class="info-card">
+            <div class="info-icon">📈</div>
+            <h4>信用評分</h4>
+            <p>基於多維度數據計算的信用評分，範圍 300-850</p>
+        </div>
+        <div class="info-card">
+            <div class="info-icon">⚠️</div>
+            <h4>風險等級</h4>
+            <p>低風險/中風險/高風險分類，直觀掌握風險狀況</p>
+        </div>
+        <div class="info-card">
+            <div class="info-icon">💰</div>
+            <h4>財務分析</h4>
+            <p>營收規模、負債比例、現金流等關鍵財務指標</p>
+        </div>
+        <div class="info-card">
+            <div class="info-icon">✅</div>
+            <h4>建議額度</h4>
+            <p>根據分析結果提供建議信用額度與付款條件</p>
+        </div>
+    </div>
+</div>
+{% endblock %}

@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+
+{% block title %}Vendor Scout - 供應商搜尋{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>🌏 AI Global Vendor Scout</h1>
+    <p>搜尋全球優質供應商，找到最適合的合作夥伴</p>
+</div>
+
+<div class="tool-container">
+    <!-- Search Form -->
+    <div class="search-panel">
+        <h2>搜尋條件</h2>
+        <form id="vendor-search-form" class="search-form">
+            <div class="form-group">
+                <label for="keyword">產品關鍵字 *</label>
+                <input type="text" id="keyword" name="keyword" placeholder="例如: electronics, textile, machinery" required>
+                <small>輸入產品類別或關鍵字（如: electronics, textile）</small>
+            </div>
+            
+            <div class="form-group">
+                <label for="country">國家/地區（選填）</label>
+                <input type="text" id="country" name="country" placeholder="例如: Taiwan, China, USA">
+                <small>留空則搜尋所有國家</small>
+            </div>
+            
+            <button type="submit" class="btn btn-primary btn-large">
+                <span class="btn-icon">🔍</span> 搜尋供應商
+            </button>
+        </form>
+    </div>
+
+    <!-- Results Section -->
+    <div id="results-section" class="results-panel" style="display: none;">
+        <div class="results-header">
+            <h2>搜尋結果</h2>
+            <div class="download-buttons">
+                <button id="download-excel" class="btn btn-outline">
+                    📊 Excel
+                </button>
+                <button id="download-pdf" class="btn btn-outline">
+                    📄 PDF
+                </button>
+            </div>
+        </div>
+        
+        <div id="results-content">
+            <!-- Results will be populated by JavaScript -->
+        </div>
+    </div>
+
+    <!-- Loading State -->
+    <div id="loading-state" class="loading-panel" style="display: none;">
+        <div class="spinner"></div>
+        <p>正在搜尋供應商...</p>
+    </div>
+
+    <!-- Sample Keywords -->
+    <div class="tips-panel">
+        <h3>💡 試試這些關鍵字</h3>
+        <div class="keyword-tags">
+            <span class="tag" onclick="fillKeyword('electronics')">electronics</span>
+            <span class="tag" onclick="fillKeyword('textile')">textile</span>
+            <span class="tag" onclick="fillKeyword('machinery')">machinery</span>
+            <span class="tag" onclick="fillKeyword('semiconductor')">semiconductor</span>
+            <span class="tag" onclick="fillKeyword('garments')">garments</span>
+        </div>
+    </div>
+</div>
+
+<script>
+function fillKeyword(keyword) {
+    document.getElementById('keyword').value = keyword;
+}
+</script>
+{% endblock %}
