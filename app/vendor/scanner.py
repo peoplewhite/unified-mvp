@@ -1,81 +1,111 @@
 """
-Vendor Scanner Module - Searches for global vendors/suppliers
+Vendor Scanner - Main orchestrator
+Coordinates keyword expansion, exhibition scraping, and AI scoring
 """
 
-import random
 from typing import List, Dict, Any
+
+from app.vendor.llm import VendorLLM
+from app.vendor.exhibitions import ExhibitionScraper
 
 
 class VendorScanner:
-    """Scans for vendors based on keyword and country"""
-    
-    # Mock data for demonstration
-    MOCK_VENDORS = {
-        "electronics": [
-            {"name": "TechGlobal Solutions", "country": "Taiwan", "rating": 4.8, "products": "Semiconductors, PCBs"},
-            {"name": "Silicon Valley Electronics", "country": "USA", "rating": 4.5, "products": "Microchips, Sensors"},
-            {"name": "Shenzhen Tech Hub", "country": "China", "rating": 4.2, "products": "Consumer Electronics"},
-            {"name": "Seoul Semiconductor", "country": "South Korea", "rating": 4.7, "products": "LED, Displays"},
-            {"name": "Tokyo Components Ltd", "country": "Japan", "rating": 4.9, "products": "Precision Components"},
-        ],
-        "textile": [
-            {"name": "Mumbai Textiles Co", "country": "India", "rating": 4.3, "products": "Cotton Fabrics"},
-            {"name": "Guangzhou Garments", "country": "China", "rating": 4.1, "products": "Apparel Manufacturing"},
-            {"name": "Bangkok Silk Works", "country": "Thailand", "rating": 4.6, "products": "Silk Products"},
-            {"name": "Dhaka Weaving Mills", "country": "Bangladesh", "rating": 4.0, "products": "Woven Fabrics"},
-            {"name": "Vietnam Fabric Plus", "country": "Vietnam", "rating": 4.4, "products": "Synthetic Fabrics"},
-        ],
-        "machinery": [
-            {"name": "German Engineering GmbH", "country": "Germany", "rating": 4.9, "products": "Industrial Machinery"},
-            {"name": "Milan Machine Works", "country": "Italy", "rating": 4.5, "products": "Precision Tools"},
-            {"name": "Shanghai Heavy Industry", "country": "China", "rating": 4.2, "products": "Construction Equipment"},
-            {"name": "Detroit Manufacturing", "country": "USA", "rating": 4.4, "products": "Automotive Parts"},
-            {"name": "Tokyo Robotics", "country": "Japan", "rating": 4.8, "products": "Automation Systems"},
-        ],
-    }
-    
+    """Main vendor search orchestrator"""
+
+    def __init__(self, timeout: int = 15):
+        self.llm = VendorLLM()
+        self.exhibition_scraper = ExhibitionScraper(timeout=timeout)
+
     async def search(self, keyword: str, country: str = "") -> List[Dict[str, Any]]:
         """
-        Search for vendors by keyword and optional country filter
-        
-        In mock mode, returns predefined vendor data
+        Full search pipeline:
+        1. LLM keyword expansion
+        2. Exhibition scraping
+        3. LLM relevance scoring
+        4. Sort and return
         """
-        # Normalize keyword
-        keyword_lower = keyword.lower()
-        
-        # Find matching category
-        results = []
-        for category, vendors in self.MOCK_VENDORS.items():
-            if keyword_lower in category or category in keyword_lower:
-                for vendor in vendors:
-                    # Filter by country if specified
-                    if country and country.lower() not in vendor["country"].lower():
-                        continue
-                    
-                    # Add metadata
-                    vendor_copy = vendor.copy()
-                    vendor_copy["category"] = category
-                    vendor_copy["match_score"] = random.randint(85, 98)
-                    vendor_copy["contact"] = f"contact@{vendor['name'].lower().replace(' ', '')}.com"
-                    vendor_copy["established"] = random.randint(1990, 2020)
-                    results.append(vendor_copy)
-        
-        # If no exact category match, return mixed results
-        if not results:
-            all_vendors = []
-            for category, vendors in self.MOCK_VENDORS.items():
-                for vendor in vendors:
-                    if country and country.lower() not in vendor["country"].lower():
-                        continue
-                    vendor_copy = vendor.copy()
-                    vendor_copy["category"] = category
-                    vendor_copy["match_score"] = random.randint(70, 85)
-                    vendor_copy["contact"] = f"contact@{vendor['name'].lower().replace(' ', '')}.com"
-                    vendor_copy["established"] = random.randint(1990, 2020)
-                    all_vendors.append(vendor_copy)
-            results = all_vendors[:8]  # Limit to 8 results
-        
-        # Sort by rating
-        results.sort(key=lambda x: x["rating"], reverse=True)
-        
-        return results
+        print(f"\n=== Vendor Search: '{keyword}' country='{country}' ===")
+
+        # Step 1: Keyword expansion
+        target_countries = [country] if country else []
+        print("  Step 1: Expanding keywords...")
+        expansion = await self.llm.expand_keywords(keyword, target_countries)
+        expanded = expansion.get("expanded_keywords", [keyword])
+        languages = expansion.get("languages_covered", ["English"])
+        print(f"    {len(expanded)} keywords in {len(languages)} languages")
+
+        # Step 2: Search exhibitions
+        print("  Step 2: Searching exhibitions...")
+        vendors = await self.exhibition_scraper.search_all(
+            keyword, expanded, country
+        )
+        print(f"    Total raw results: {len(vendors)}")
+
+        if not vendors:
+            return []
+
+        # Apply country filter if specified
+        if country:
+            country_lower = country.lower()
+            filtered = [
+                v for v in vendors
+                if country_lower in v.get("country", "").lower()
+                or v.get("country", "") == "Global"
+            ]
+            # Keep all if filter removes too many
+            if len(filtered) >= 3:
+                vendors = filtered
+
+        # Step 3: AI relevance scoring
+        print("  Step 3: AI relevance scoring...")
+        vendors = await self.llm.score_vendors(keyword, vendors)
+
+        # Fallback: rule-based scoring for any vendors without LLM scores
+        for v in vendors:
+            if v.get("match_score", 0) == 0:
+                v["match_score"] = self._rule_based_score(v, keyword, country)
+
+        # Step 4: Sort by score, filter low relevance
+        vendors.sort(key=lambda x: x["match_score"], reverse=True)
+        # Remove vendors below 60 if we have enough above
+        high_quality = [v for v in vendors if v["match_score"] >= 60]
+        if len(high_quality) >= 10:
+            vendors = high_quality
+
+        result = vendors[:100]
+        print(f"  Final results: {len(result)} vendors")
+        return result
+
+    def _rule_based_score(
+        self, vendor: Dict[str, Any], keyword: str, country: str
+    ) -> int:
+        """Fallback rule-based scoring when LLM is unavailable"""
+        score = 70
+        name_lower = vendor.get("name", "").lower()
+        desc_lower = vendor.get("description", "").lower()
+        kw = keyword.lower()
+
+        if kw in name_lower:
+            score += 15
+        if kw in desc_lower:
+            score += 5
+
+        supplier_words = [
+            "supplier", "manufacturer", "factory", "producer",
+            "exporter", "exhibitor", "GmbH", "Ltd", "Inc", "Corp",
+        ]
+        for w in supplier_words:
+            if w.lower() in desc_lower or w.lower() in name_lower:
+                score += 3
+
+        if country:
+            vc = vendor.get("country", "").lower()
+            if country.lower() in vc or vc in country.lower():
+                score += 10
+
+        # Bonus for having real exhibition source
+        exhibition = vendor.get("exhibition", "")
+        if exhibition and exhibition != "Trade Show News":
+            score += 5
+
+        return min(99, score)
