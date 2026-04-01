@@ -1,70 +1,74 @@
 """
-Exhibition Scraper - Fetches exhibitor data from trade show websites
-Uses direct APIs where available, Brave Search as fallback
+Electronica Exhibitor Client
+Fetches real exhibitor data from electronica 2024 via sitemap + detail pages
 """
 
 import asyncio
-import hashlib
 import re
 import ssl
-from typing import List, Dict, Any
-from urllib.parse import quote, urlparse
+from typing import Any
 
 import httpx
 from bs4 import BeautifulSoup
 
 
-EXHIBITIONS = [
-    {
-        "name": "Hannover Messe",
-        "url": "hannovermesse.de",
-        "industry": ["industrial", "automation", "energy", "machinery"],
-        "country": "Germany",
-        "year": "2026",
-        "scrape_type": "brave",
-    },
-    {
-        "name": "electronica",
-        "url": "electronica.de",
-        "industry": ["electronics", "semiconductor", "sensor", "connector"],
-        "country": "Germany",
-        "year": "2026",
-        "scrape_type": "electronica_api",
-        "api_project_id": "807",
-    },
-    {
-        "name": "SEMICON West",
-        "url": "semiconwest.org",
-        "industry": ["semiconductor", "IC", "wafer", "chip"],
-        "country": "USA",
-        "year": "2026",
-        "scrape_type": "brave",
-    },
-    {
-        "name": "MEDICA",
-        "url": "medica-tradefair.com",
-        "industry": ["medical", "healthcare", "diagnostic", "pharma"],
-        "country": "Germany",
-        "year": "2026",
-        "scrape_type": "brave",
-    },
-    {
-        "name": "CEATEC Japan",
-        "url": "ceatec.com",
-        "industry": ["electronics", "IT", "semiconductor", "sensor", "automotive"],
-        "country": "Japan",
-        "year": "2026",
-        "scrape_type": "brave",
-    },
-]
+SITEMAP_URL = (
+    "https://exhibitors.electronica.de"
+    "/media/807/tmp/scf/sitemap/xml-sitemap_ex_807_1.xml"
+)
+AUTOCOMPLETE_URL = (
+    "https://exhibitors.electronica.de"
+    "/_inc002/_modules/public/ajax_getValuesForSearchField.cfm"
+)
+DETAIL_BASE = (
+    "https://exhibitors.electronica.de"
+    "/exhibitor-portal/2024/list-of-exhibitors/exhibitordetails/{slug}/"
+)
+PROJECT_ID = "807"
 
 
-class ExhibitionScraper:
-    """Scrapes exhibitor data from trade show websites and search engines"""
+def _name_to_slug(name: str) -> str:
+    slug = name.lower()
+    slug = re.sub(r"[^a-z0-9\s-]", "", slug)
+    slug = re.sub(r"\s+", "-", slug.strip())
+    return re.sub(r"-+", "-", slug)
 
-    def __init__(self, timeout: int = 15):
+
+def _is_company(name: str) -> bool:
+    """Filter out product category names, keep company names."""
+    company_suffixes = [
+        "gmbh", "ltd", "inc", "co.", "corp", "ag", "llc", "s.a.", "bv",
+        "nv", "oy", "ab", "as", "srl", "spa", "sarl", "kft", "plc", "pty",
+        "co.,", "technology", "technologies", "electronics", "semiconductor",
+        "solutions", "systems", "group", "international",
+    ]
+    category_patterns = [
+        r"^[a-z]",                      # starts lowercase
+        r"\bfor\b|\bwith\b|\band\b",     # generic descriptions
+        r"^(components?|devices?|sensors?|modules?|circuits?)$",
+    ]
+    name_lower = name.lower()
+    if any(s in name_lower for s in company_suffixes):
+        return True
+    for p in category_patterns:
+        if re.search(p, name_lower):
+            return False
+    # Short single-word lowercase-ish names are likely categories
+    if len(name.split()) <= 2 and name[0].islower():
+        return False
+    return True
+
+
+class ElectronicaClient:
+    """Fetches electronica 2024 exhibitor data using sitemap + detail pages."""
+
+    def __init__(self, timeout: int = 15) -> None:
         self.timeout = timeout
-        self.headers = {
+        self._sitemap_cache: dict[str, str] = {}  # slug → exhibitor_id
+        self._ssl_ctx = ssl.create_default_context()
+        self._ssl_ctx.check_hostname = False
+        self._ssl_ctx.verify_mode = ssl.CERT_NONE
+        self._headers = {
             "User-Agent": (
                 "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
                 "AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -72,432 +76,217 @@ class ExhibitionScraper:
             ),
             "Accept-Language": "en-US,en;q=0.9",
         }
-        self._ssl_ctx = ssl.create_default_context()
-        self._ssl_ctx.check_hostname = False
-        self._ssl_ctx.verify_mode = ssl.CERT_NONE
 
-    def get_relevant_exhibitions(self, keyword: str) -> List[Dict[str, Any]]:
-        """Filter exhibitions relevant to the keyword"""
-        kw = keyword.lower()
-        relevant = []
-        for ex in EXHIBITIONS:
-            # Check if keyword matches any industry tag
-            if any(ind in kw for ind in ex["industry"]):
-                relevant.append(ex)
-        # If no specific match, include all exhibitions
-        if not relevant:
-            relevant = list(EXHIBITIONS)
-        return relevant
-
-    async def search_all(
-        self,
-        keyword: str,
-        expanded_keywords: List[str],
-        target_country: str = "",
-    ) -> List[Dict[str, Any]]:
-        """Search all relevant exhibitions for vendors"""
-        exhibitions = self.get_relevant_exhibitions(keyword)
-        all_vendors = []
-
-        async with httpx.AsyncClient(
+    def _make_client(self) -> httpx.AsyncClient:
+        return httpx.AsyncClient(
             timeout=self.timeout,
-            headers=self.headers,
+            headers=self._headers,
             follow_redirects=True,
             verify=self._ssl_ctx,
-        ) as client:
-            for ex in exhibitions:
-                try:
-                    if ex["scrape_type"] == "electronica_api":
-                        vendors = await self._scrape_electronica(
-                            client, keyword, expanded_keywords, ex
-                        )
-                    else:
-                        vendors = await self._scrape_via_brave(
-                            client, keyword, expanded_keywords, ex
-                        )
-                    all_vendors.extend(vendors)
-                    print(f"  {ex['name']}: {len(vendors)} exhibitors found")
-                except Exception as e:
-                    print(f"  {ex['name']} failed: {e.__class__.__name__}")
+        )
 
-                # Rate limit delay between exhibitions
-                await asyncio.sleep(2)
+    async def load_sitemap(self) -> dict[str, str]:
+        """Load all exhibitor slugs and IDs from the sitemap. Cached."""
+        if self._sitemap_cache:
+            return self._sitemap_cache
 
-            # Also search Google News RSS for recent exhibitor news
-            news_vendors = await self._search_exhibition_news(
-                client, keyword, target_country
-            )
-            all_vendors.extend(news_vendors)
+        async with self._make_client() as client:
+            response = await client.get(SITEMAP_URL)
+            response.raise_for_status()
 
-        return self._deduplicate(all_vendors)
+        slugs: dict[str, str] = {}
+        for m in re.finditer(
+            r"ausstellerdetails/([^/]+)/\?elb=807\.1100\.(\d+)", response.text
+        ):
+            slugs[m.group(1)] = m.group(2)
 
-    async def _scrape_electronica(
-        self,
-        client: httpx.AsyncClient,
-        keyword: str,
-        expanded_keywords: List[str],
-        exhibition: Dict[str, Any],
-    ) -> List[Dict[str, Any]]:
-        """Scrape electronica using their autocomplete API"""
-        vendors = []
-        seen_names = set()
-        search_terms = [keyword] + expanded_keywords[:5]
+        self._sitemap_cache = slugs
+        print(f"  Sitemap loaded: {len(slugs)} exhibitors")
+        return slugs
 
-        for term in search_terms:
-            try:
-                url = (
-                    f"https://exhibitors.electronica.de/"
-                    f"_inc002/_modules/public/ajax_getValuesForSearchField.cfm"
-                    f"?q={quote(term)}&p_id={exhibition['api_project_id']}"
-                    f"&lng=2&maxResults=30"
-                )
-                response = await client.get(url)
-                if response.status_code == 200:
-                    lines = response.text.strip().split("\n")
-                    for line in lines:
-                        parts = line.split("|")
-                        if len(parts) >= 1:
-                            name = parts[0].strip()
-                            if (
-                                name
-                                and len(name) > 3
-                                and name.lower() not in seen_names
-                                and not self._is_category_name(name)
-                            ):
-                                seen_names.add(name.lower())
-                                vendors.append(
-                                    self._build_vendor(
-                                        name=name,
-                                        exhibition=exhibition["name"],
-                                        keyword=keyword,
-                                        website=f"https://exhibitors.electronica.de/",
-                                    )
-                                )
-            except Exception:
-                continue
-            await asyncio.sleep(1)
+    async def autocomplete(
+        self, keyword: str, client: httpx.AsyncClient
+    ) -> list[str]:
+        """Return company names matching the keyword from autocomplete API."""
+        response = await client.get(
+            AUTOCOMPLETE_URL,
+            params={"q": keyword, "p_id": PROJECT_ID, "lng": "2", "maxResults": "30"},
+        )
+        if response.status_code != 200:
+            return []
+        names = [
+            line.split("|")[0].strip()
+            for line in response.text.strip().split("\n")
+            if "|" in line
+        ]
+        return [n for n in names if _is_company(n)]
 
-        return vendors
+    async def fetch_detail(
+        self, slug: str, exhibitor_id: str, client: httpx.AsyncClient
+    ) -> dict[str, Any] | None:
+        """Fetch and parse a single exhibitor's detail page."""
+        url = DETAIL_BASE.format(slug=slug)
+        response = await client.get(
+            url, params={"elb": f"807.1100.{exhibitor_id}.1.111", "uls": "2"}
+        )
+        if response.status_code != 200:
+            return None
 
-    async def _scrape_via_brave(
-        self,
-        client: httpx.AsyncClient,
-        keyword: str,
-        expanded_keywords: List[str],
-        exhibition: Dict[str, Any],
-    ) -> List[Dict[str, Any]]:
-        """Search Brave for exhibitors at a specific exhibition"""
-        vendors = []
-        query = f"{exhibition['name']} {exhibition['year']} exhibitor {keyword}"
+        # Verify it's actually an exhibitor page (not a redirect to homepage)
+        if "list-of-exhibitors" not in response.url.path and len(response.text) > 200_000:
+            return None
 
-        try:
-            url = f"https://search.brave.com/search?q={quote(query)}&source=web"
-            response = await client.get(url)
+        return self._parse_detail(response.text, slug)
 
-            if response.status_code == 200:
-                vendors = self._parse_brave_results(
-                    response.text, keyword, exhibition["name"]
-                )
-            elif response.status_code == 429:
-                print(f"    Brave rate-limited, trying Google News fallback")
-                vendors = await self._news_fallback(
-                    client, keyword, exhibition["name"]
-                )
-        except Exception:
-            pass
-
-        return vendors
-
-    async def _news_fallback(
-        self,
-        client: httpx.AsyncClient,
-        keyword: str,
-        exhibition_name: str,
-    ) -> List[Dict[str, Any]]:
-        """Fallback: use Google News RSS when Brave is rate-limited"""
-        vendors = []
-        query = f"{exhibition_name} exhibitor {keyword}"
-        try:
-            rss_url = (
-                f"https://news.google.com/rss/search?q={quote(query)}"
-                f"&hl=en&gl=US&ceid=US:en"
-            )
-            response = await client.get(rss_url)
-            if response.status_code == 200:
-                soup = BeautifulSoup(response.text, "xml")
-                for item in soup.find_all("item", limit=10):
-                    title = item.find("title")
-                    link = item.find("link")
-                    if not title:
-                        continue
-                    title_text = title.get_text(strip=True)
-                    link_text = link.get_text(strip=True) if link else ""
-                    name = self._extract_company_from_title(title_text)
-                    if name:
-                        vendors.append(
-                            self._build_vendor(
-                                name=name,
-                                exhibition=exhibition_name,
-                                keyword=keyword,
-                                website=link_text,
-                                description=title_text,
-                            )
-                        )
-        except Exception:
-            pass
-        return vendors
-
-    async def _search_exhibition_news(
-        self,
-        client: httpx.AsyncClient,
-        keyword: str,
-        country: str,
-    ) -> List[Dict[str, Any]]:
-        """Search Google News for recent exhibition/trade show vendor news"""
-        vendors = []
-        query_parts = [keyword, "trade show OR exhibition", "exhibitor OR booth"]
-        if country:
-            query_parts.append(country)
-        query = " ".join(query_parts)
-
-        try:
-            rss_url = (
-                f"https://news.google.com/rss/search?q={quote(query)}"
-                f"&hl=en&gl=US&ceid=US:en"
-            )
-            response = await client.get(rss_url)
-            if response.status_code == 200:
-                soup = BeautifulSoup(response.text, "xml")
-                for item in soup.find_all("item", limit=10):
-                    title = item.find("title")
-                    link = item.find("link")
-                    if not title:
-                        continue
-                    title_text = title.get_text(strip=True)
-                    link_text = link.get_text(strip=True) if link else ""
-                    # Try to extract exhibition name from title
-                    exhibition = self._detect_exhibition(title_text)
-                    name = self._extract_company_from_title(title_text)
-                    if name:
-                        vendors.append(
-                            self._build_vendor(
-                                name=name,
-                                exhibition=exhibition or "Trade Show News",
-                                keyword=keyword,
-                                website=link_text,
-                                description=title_text,
-                            )
-                        )
-            print(f"  Exhibition News: {len(vendors)} vendor mentions found")
-        except Exception as e:
-            print(f"  Exhibition News failed: {e.__class__.__name__}")
-
-        return vendors
-
-    def _parse_brave_results(
-        self, html: str, keyword: str, exhibition_name: str
-    ) -> List[Dict[str, Any]]:
-        """Parse Brave Search results for exhibitor data"""
-        vendors = []
+    def _parse_detail(self, html: str, slug: str) -> dict[str, Any]:
         soup = BeautifulSoup(html, "html.parser")
+        for tag in soup(["script", "style", "nav", "footer"]):
+            tag.decompose()
 
-        for result in soup.select('div[data-type="web"]'):
+        lines = [
+            l.strip()
+            for l in soup.get_text(separator="\n").split("\n")
+            if l.strip() and len(l.strip()) > 1
+        ]
+
+        # The page structure (after navigation) is:
+        #   CompanyName → Booth → ShortDesc → "Company profile" →
+        #   FullDesc → "Application areas" → areas → "Products and services" →
+        #   products → "Contact" → address / phone / email / website
+        # Find where navigation ends and exhibitor content begins
+        nav_sentinels = ("Careers", "Solutions", "Press")
+        start = 0
+        for sentinel in nav_sentinels:
             try:
-                title_el = result.select_one(".title")
-                if not title_el:
-                    continue
-                title = title_el.get_text(strip=True)
-                if not title or len(title) < 3:
-                    continue
-
-                url = ""
-                for a in result.find_all("a"):
-                    href = a.get("href", "")
-                    if href.startswith("http") and "brave.com" not in href:
-                        url = href
-                        break
-                if not url:
-                    continue
-
-                if self._is_noise(title, url):
-                    continue
-
-                snippet_el = result.select_one(".snippet-description")
-                snippet = snippet_el.get_text(strip=True) if snippet_el else ""
-
-                name = re.split(r"\s*[-|–—:]\s*", title)[0].strip()
-                if len(name) < 2 or len(name) > 80:
-                    continue
-
-                domain = urlparse(url).netloc.replace("www.", "")
-
-                vendors.append(
-                    self._build_vendor(
-                        name=name,
-                        exhibition=exhibition_name,
-                        keyword=keyword,
-                        website=url,
-                        description=snippet or title,
-                        contact=f"info@{domain}",
-                        country=self._detect_country(title + " " + snippet, url),
-                    )
-                )
-            except Exception:
+                start = next(i for i, l in enumerate(lines) if l == sentinel) + 1
+                break
+            except StopIteration:
                 continue
 
-        return vendors
+        content = lines[start:]
 
-    def _build_vendor(
-        self,
-        name: str,
-        exhibition: str,
-        keyword: str,
-        website: str = "",
-        description: str = "",
-        contact: str = "",
-        country: str = "",
-    ) -> Dict[str, Any]:
-        """Build a structured vendor entry"""
+        name = self._extract_name(soup)
+        booth = next((l for l in content if re.match(r"^[A-Z]\d+\.\d+$", l)), "")
+
+        # Everything is parsed relative to section headers
+        description = ""
+        application_areas: list[str] = []
+        products: list[str] = []
+        address = phone = email = website = ""
+
+        section = "header"
+        for line in content:
+            ll = line.lower()
+
+            # Section transitions
+            if ll == "company profile":
+                section = "profile"
+                continue
+            elif ll == "application areas":
+                section = "areas"
+                continue
+            elif ll in ("products and services", "products/services"):
+                section = "products"
+                continue
+            elif ll == "contact":
+                section = "contact"
+                continue
+
+            if section == "header" and not booth:
+                pass  # still in booth/short-desc territory
+            elif section == "profile" and not description:
+                if len(line) > 40 and not line.startswith("http"):
+                    description = line
+            elif section == "areas":
+                if not re.match(r"^\d+\s+exhibitors?$", ll) and 4 < len(line) < 100:
+                    application_areas.append(line)
+                    if len(application_areas) >= 5:
+                        section = "areas_done"
+            elif section == "products":
+                if not re.match(r"^\d+\s+exhibitors?$", ll) and 3 < len(line) < 80:
+                    if line not in products:
+                        products.append(line)
+                    if len(products) >= 8:
+                        section = "products_done"
+            elif section == "contact":
+                if not email and re.match(r"[\w.+-]+@[\w.-]+\.[a-z]{2,}$", line):
+                    email = line
+                elif not phone and re.match(r"^\+[\d\s\-().]{7,20}$", line):
+                    phone = line
+                elif not website and re.match(r"^www\.", line):
+                    website = "https://" + line
+                elif not address and re.search(r"\b\d{4,6}\b", line) and len(line) > 15:
+                    address = line
+
         return {
             "name": name,
-            "country": country or "Global",
-            "category": keyword,
-            "exhibition": exhibition,
-            "rating": self._stable_rating(name),
-            "match_score": 0,
-            "products": description[:100] if description else keyword.title(),
-            "contact": contact,
-            "website": website,
+            "booth": booth,
             "description": description,
-            "established": "",
+            "address": address,
+            "phone": phone,
+            "email": email,
+            "website": website,
+            "products": products,
+            "application_areas": application_areas,
+            "exhibition": "electronica 2024",
+            "slug": slug,
+            "match_score": 0,
         }
 
-    def _is_category_name(self, name: str) -> bool:
-        """Check if a name is a category rather than a company"""
-        category_indicators = [
-            "sensor", "sensors", "connector", "connectors",
-            "capacitor", "capacitors", "resistor", "resistors",
-            "cable", "cables", "module", "modules",
-            "device", "devices", "system", "systems",
-            "component", "components", "equipment",
-            "instrument", "instruments", "tool", "tools",
-            "material", "materials", "battery", "diode",
-            "transistor", "relay", "switch", "fuse",
-            "transformer", "antenna", "filter", "amplifier",
-        ]
-        company_indicators = [
-            "gmbh", "ltd", "inc", "co.", "corp", "ag", "llc",
-            "s.a.", "bv", "nv", "oy", "ab", "as", "srl",
-            "spa", "sarl", "kft", "plc", "pty",
-        ]
-        name_lower = name.lower()
-
-        # Has a company suffix → definitely a company
-        if any(ind in name_lower for ind in company_indicators):
-            return False
-
-        # Starts with lowercase or generic adjective → likely category
-        if name[0].islower():
-            return True
-
-        # Contains "for" or "with" patterns → category description
-        if " for " in name_lower or " with " in name_lower:
-            return True
-
-        # Short generic names are categories
-        words = name_lower.split()
-        if len(words) <= 4 and any(ci in name_lower for ci in category_indicators):
-            return True
-
-        return False
-
-    def _extract_company_from_title(self, title: str) -> str:
-        """Extract company name from news title"""
-        patterns = [
-            r"^([A-Z][A-Za-z\s&\.\,]+?)\s+(?:to|announces|launches|partners|"
-            r"expands|opens|signs|reports|showcases|exhibits|unveils|debuts|displays)",
-            r"^([A-Z][A-Za-z\s&\.\,]+?)\s*[-\u2013\u2014]\s",
-        ]
-        for p in patterns:
-            m = re.match(p, title)
-            if m:
-                name = m.group(1).strip().rstrip(",")
-                if 3 < len(name) < 50:
-                    return name
+    def _extract_name(self, soup: BeautifulSoup) -> str:
+        h1 = soup.find("h1")
+        if h1:
+            text = h1.get_text(strip=True)
+            return re.sub(r"\s+at\s+electronica\s+\d{4}.*$", "", text, flags=re.I).strip()
         return ""
 
-    def _detect_exhibition(self, text: str) -> str:
-        """Detect exhibition name from text"""
-        text_lower = text.lower()
-        for ex in EXHIBITIONS:
-            if ex["name"].lower() in text_lower:
-                return ex["name"]
-        exhibition_names = [
-            "CES", "MWC", "IFA", "Computex", "Canton Fair",
-            "Automechanika", "Productronica", "Embedded World",
-        ]
-        for name in exhibition_names:
-            if name.lower() in text_lower:
-                return name
-        return ""
+    async def search(
+        self, keyword: str, expanded_keywords: list[str]
+    ) -> list[dict[str, Any]]:
+        """
+        Full search:
+        1. Load sitemap (cached after first call)
+        2. Autocomplete for each keyword variant → company names
+        3. Match names to sitemap slugs → get exhibitor IDs
+        4. Fetch detail pages concurrently
+        """
+        async with self._make_client() as client:
+            sitemap = await self.load_sitemap()
 
-    def _detect_country(self, text: str, url: str) -> str:
-        """Detect country from text or URL TLD"""
-        tld_map = {
-            ".tw": "Taiwan", ".cn": "China", ".jp": "Japan",
-            ".kr": "South Korea", ".de": "Germany", ".uk": "United Kingdom",
-            ".fr": "France", ".it": "Italy", ".in": "India",
-            ".th": "Thailand", ".vn": "Vietnam", ".my": "Malaysia",
-            ".sg": "Singapore", ".id": "Indonesia", ".br": "Brazil",
-            ".mx": "Mexico", ".au": "Australia", ".ca": "Canada",
-        }
-        domain = urlparse(url).netloc.lower()
-        for tld, c in tld_map.items():
-            if domain.endswith(tld):
-                return c
+            # Collect candidate company names from all keyword variants
+            all_names: set[str] = set()
+            search_terms = [keyword] + expanded_keywords[:4]
+            for term in search_terms:
+                names = await self.autocomplete(term, client)
+                all_names.update(names)
+                await asyncio.sleep(0.5)
 
-        country_names = [
-            "Taiwan", "China", "Japan", "South Korea", "India", "Germany",
-            "USA", "United States", "United Kingdom", "France", "Italy",
-            "Thailand", "Vietnam", "Malaysia", "Singapore", "Indonesia",
-            "Brazil", "Mexico", "Canada", "Australia", "Turkey",
-        ]
-        text_lower = text.lower()
-        for c in country_names:
-            if c.lower() in text_lower:
-                return c
-        return "Global"
+            print(f"  Autocomplete: {len(all_names)} unique company candidates")
 
-    def _is_noise(self, title: str, url: str) -> bool:
-        """Filter out non-vendor results"""
-        noise_domains = [
-            "wikipedia.org", "youtube.com", "reddit.com", "facebook.com",
-            "twitter.com", "linkedin.com", "instagram.com", "tiktok.com",
-            "amazon.com", "ebay.com", "google.com", "bing.com",
-            "yahoo.com", "pinterest.com",
-        ]
-        noise_words = ["how to", "what is", "definition", "wiki", "forum"]
-        domain = urlparse(url).netloc.lower()
-        title_lower = title.lower()
+            # Match to sitemap to get IDs
+            candidates: list[tuple[str, str]] = []  # (slug, id)
+            for name in all_names:
+                slug = _name_to_slug(name)
+                if slug in sitemap:
+                    candidates.append((slug, sitemap[slug]))
 
-        if any(nd in domain for nd in noise_domains):
-            return True
-        if any(nw in title_lower for nw in noise_words):
-            return True
-        return False
+            print(f"  Sitemap matched: {len(candidates)} exhibitors")
 
-    def _stable_rating(self, seed: str) -> float:
-        """Generate a stable rating based on seed string"""
-        h = int(hashlib.md5(seed.encode()).hexdigest()[:8], 16)
-        return round(3.5 + (h % 15) / 10, 1)
+            if not candidates:
+                return []
 
-    def _deduplicate(self, vendors: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Remove duplicate vendors by name similarity"""
-        seen = {}
-        unique = []
-        for v in vendors:
-            key = re.sub(r"[^a-z0-9]", "", v["name"].lower())[:30]
-            if key not in seen:
-                seen[key] = True
-                unique.append(v)
-        return unique
+            # Fetch detail pages concurrently (max 5 at a time)
+            semaphore = asyncio.Semaphore(5)
+
+            async def fetch_with_limit(slug: str, eid: str) -> dict[str, Any] | None:
+                async with semaphore:
+                    result = await self.fetch_detail(slug, eid, client)
+                    await asyncio.sleep(0.3)
+                    return result
+
+            tasks = [fetch_with_limit(slug, eid) for slug, eid in candidates]
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        exhibitors = [r for r in results if isinstance(r, dict) and r.get("name")]
+        print(f"  Detail pages fetched: {len(exhibitors)}")
+        return exhibitors

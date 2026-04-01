@@ -1,44 +1,45 @@
 {% extends "base.html" %}
 
-{% block title %}Unified MVP - 首頁{% endblock %}
+{% block title %}Global Vendor Scout{% endblock %}
 
 {% block content %}
 <div class="hero-section">
-    <h1 class="hero-title">🌏 AI Global Vendor Scout</h1>
-    <p class="hero-subtitle">搜尋全球供應商，快速找到符合需求的合作夥伴</p>
+    <h1 class="hero-title">Global Vendor Scout</h1>
+    <p class="hero-subtitle">輸入關鍵字，找到 electronica 2024 的相關參展商</p>
 </div>
 
 <div class="cards-container">
     <div class="feature-card">
         <div class="card-icon">🔍</div>
-        <h2 class="card-title">全球供應商搜尋</h2>
+        <h2 class="card-title">electronica 2024 參展商搜尋</h2>
         <p class="card-description">
-            搜尋全球供應商，快速找到符合需求的廠商。<br>
-            支援關鍵字搜尋、國家篩選，並可匯出 Excel/PDF 報告。
+            全球最大電子展（德國慕尼黑）的參展商資料庫。<br>
+            輸入零件或技術關鍵字，找到相關供應商的展位、聯絡方式與產品資訊。
         </p>
         <ul class="feature-list">
-            <li>✅ 關鍵字 + 國家篩選</li>
-            <li>✅ 評分與匹配度分析</li>
-            <li>✅ Excel/PDF 匯出</li>
+            <li>✅ 真實 electronica 2024 參展商資料</li>
+            <li>✅ 含展位、Email、電話、官網</li>
+            <li>✅ AI 相關度評分與多語言關鍵字擴展</li>
+            <li>✅ Excel / PDF 匯出</li>
         </ul>
-        <a href="/vendor" class="btn btn-primary">開始搜尋廠商</a>
+        <a href="/vendor" class="btn btn-primary">開始搜尋</a>
     </div>
 </div>
 
 <div class="info-section">
-    <h3>📋 使用說明</h3>
+    <h3>📋 使用方式</h3>
     <div class="info-grid">
         <div class="info-item">
-            <strong>⚡ 快速開始</strong>
-            <p>點擊上方按鈕，輸入產品關鍵字即可開始搜尋。</p>
+            <strong>1. 輸入關鍵字</strong>
+            <p>例如：sensor、capacitor、MOSFET、connector、power supply</p>
         </div>
         <div class="info-item">
-            <strong>🌍 國家篩選</strong>
-            <p>可選擇特定國家/地區，精準找到目標供應商。</p>
+            <strong>2. 篩選國家（選填）</strong>
+            <p>指定 Germany、Japan、China 等，縮小搜尋範圍</p>
         </div>
         <div class="info-item">
-            <strong>📊 報告匯出</strong>
-            <p>搜尋結果可匯出為 Excel 或 PDF 專業報告。</p>
+            <strong>3. 取得完整資料</strong>
+            <p>展位號、公司描述、產品分類、Email、電話、官網，可匯出報告</p>
         </div>
     </div>
 </div>

@@ -14,7 +14,7 @@ from app.vendor.scanner import VendorScanner
 from app.vendor.exporter import VendorExporter
 
 app = FastAPI(
-    title="Unified MVP",
+    title="Global Vendor Scout",
     description="AI Global Vendor Scout",
     version="1.0.0"
 )

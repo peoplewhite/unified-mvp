@@ -18,7 +18,7 @@ class VendorExporter:
     """Exports vendor search results to various formats"""
 
     def __init__(self):
-        self.temp_dir = "/tmp/unified_mvp"
+        self.temp_dir = "/tmp/global_vendor_scout"
         os.makedirs(self.temp_dir, exist_ok=True)
 
     def to_excel(self, vendors: List[Dict[str, Any]], keyword: str, country: str) -> str:
@@ -35,10 +35,9 @@ class VendorExporter:
         header_fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
         header_alignment = Alignment(horizontal="center", vertical="center")
 
-        # Headers per spec: Rank | Vendor | Country | Website | Email | Exhibition | Relevance Score
         headers = [
-            "Rank", "Vendor", "Country", "Website", "Email",
-            "Exhibition", "Relevance Score", "Products",
+            "Rank", "Company", "Booth", "Exhibition", "Relevance Score",
+            "Products", "Application Areas", "Website", "Email", "Phone", "Address",
         ]
         for col, header in enumerate(headers, 1):
             cell = ws.cell(row=1, column=col, value=header)
@@ -48,17 +47,22 @@ class VendorExporter:
 
         # Data rows
         for row, vendor in enumerate(vendors, 2):
+            products = ", ".join(vendor.get("products", []))
+            areas = ", ".join(vendor.get("application_areas", []))
             ws.cell(row=row, column=1, value=row - 1)
             ws.cell(row=row, column=2, value=vendor.get("name", ""))
-            ws.cell(row=row, column=3, value=vendor.get("country", ""))
-            ws.cell(row=row, column=4, value=vendor.get("website", ""))
-            ws.cell(row=row, column=5, value=vendor.get("contact", ""))
-            ws.cell(row=row, column=6, value=vendor.get("exhibition", ""))
-            ws.cell(row=row, column=7, value=vendor.get("match_score", 0))
-            ws.cell(row=row, column=8, value=vendor.get("products", ""))
+            ws.cell(row=row, column=3, value=vendor.get("booth", ""))
+            ws.cell(row=row, column=4, value=vendor.get("exhibition", ""))
+            ws.cell(row=row, column=5, value=vendor.get("match_score", 0))
+            ws.cell(row=row, column=6, value=products)
+            ws.cell(row=row, column=7, value=areas)
+            ws.cell(row=row, column=8, value=vendor.get("website", ""))
+            ws.cell(row=row, column=9, value=vendor.get("email", ""))
+            ws.cell(row=row, column=10, value=vendor.get("phone", ""))
+            ws.cell(row=row, column=11, value=vendor.get("address", ""))
 
         # Adjust column widths
-        column_widths = [6, 30, 15, 35, 25, 20, 15, 30]
+        column_widths = [6, 30, 8, 18, 12, 35, 30, 30, 25, 18, 40]
         for i, width in enumerate(column_widths, 1):
             ws.column_dimensions[chr(64 + i)].width = width
 
@@ -83,7 +87,7 @@ class VendorExporter:
         )
 
         # Title
-        elements.append(Paragraph("<b>AI Global Vendor Scout Report</b>", title_style))
+        elements.append(Paragraph("<b>electronica 2024 — Exhibitor Report</b>", title_style))
 
         # Search conditions
         info_style = ParagraphStyle(
@@ -119,19 +123,19 @@ class VendorExporter:
         # Top 20 vendor table
         top_vendors = vendors[:20]
         table_data = [
-            ["Rank", "Vendor", "Country", "Exhibition", "Score", "Products"]
+            ["Rank", "Company", "Booth", "Score", "Products/Services", "Website"]
         ]
         for i, vendor in enumerate(top_vendors, 1):
-            products = vendor.get("products", "")
-            if len(products) > 35:
-                products = products[:35] + "..."
+            products = ", ".join(vendor.get("products", []))
+            if len(products) > 40:
+                products = products[:40] + "..."
             table_data.append([
                 str(i),
                 vendor.get("name", "")[:30],
-                vendor.get("country", ""),
-                vendor.get("exhibition", "")[:20],
+                vendor.get("booth", ""),
                 str(vendor.get("match_score", 0)),
                 products,
+                vendor.get("website", "")[:30],
             ])
 
         table = Table(table_data, repeatRows=1)
@@ -153,20 +157,20 @@ class VendorExporter:
         elements.append(table)
         elements.append(Spacer(1, 0.2 * inch))
 
-        # Country distribution summary
-        country_dist = {}
+        # Application area distribution
+        area_dist: dict[str, int] = {}
         for v in vendors:
-            c = v.get("country", "Global")
-            country_dist[c] = country_dist.get(c, 0) + 1
-        sorted_countries = sorted(country_dist.items(), key=lambda x: x[1], reverse=True)
+            for area in v.get("application_areas", []):
+                area_dist[area] = area_dist.get(area, 0) + 1
+        sorted_areas = sorted(area_dist.items(), key=lambda x: x[1], reverse=True)
 
-        if sorted_countries:
+        if sorted_areas:
             elements.append(
-                Paragraph("<b>Suggested priority countries:</b>", info_style)
+                Paragraph("<b>Top application areas:</b>", info_style)
             )
-            for c, count in sorted_countries[:5]:
+            for area, count in sorted_areas[:5]:
                 elements.append(
-                    Paragraph(f"  {c}: {count} vendors", info_style)
+                    Paragraph(f"  {area}: {count} companies", info_style)
                 )
 
         elements.append(Spacer(1, 0.3 * inch))

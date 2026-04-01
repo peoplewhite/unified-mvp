@@ -1,111 +1,73 @@
 """
-Vendor Scanner - Main orchestrator
-Coordinates keyword expansion, exhibition scraping, and AI scoring
+Vendor Scanner - Orchestrates keyword expansion, exhibitor search, and AI scoring
 """
 
-from typing import List, Dict, Any
+from typing import Any
 
 from app.vendor.llm import VendorLLM
-from app.vendor.exhibitions import ExhibitionScraper
+from app.vendor.exhibitions import ElectronicaClient
 
 
 class VendorScanner:
-    """Main vendor search orchestrator"""
-
-    def __init__(self, timeout: int = 15):
+    def __init__(self, timeout: int = 15) -> None:
         self.llm = VendorLLM()
-        self.exhibition_scraper = ExhibitionScraper(timeout=timeout)
+        self.electronica = ElectronicaClient(timeout=timeout)
 
-    async def search(self, keyword: str, country: str = "") -> List[Dict[str, Any]]:
-        """
-        Full search pipeline:
-        1. LLM keyword expansion
-        2. Exhibition scraping
-        3. LLM relevance scoring
-        4. Sort and return
-        """
-        print(f"\n=== Vendor Search: '{keyword}' country='{country}' ===")
+    async def search(self, keyword: str, country: str = "") -> list[dict[str, Any]]:
+        print(f"\n=== Exhibitor Search: '{keyword}' ===")
 
-        # Step 1: Keyword expansion
-        target_countries = [country] if country else []
+        # Step 1: Expand keyword to multilingual variants
         print("  Step 1: Expanding keywords...")
-        expansion = await self.llm.expand_keywords(keyword, target_countries)
+        expansion = await self.llm.expand_keywords(keyword, [country] if country else [])
         expanded = expansion.get("expanded_keywords", [keyword])
-        languages = expansion.get("languages_covered", ["English"])
-        print(f"    {len(expanded)} keywords in {len(languages)} languages")
+        print(f"    {len(expanded)} variants")
 
-        # Step 2: Search exhibitions
-        print("  Step 2: Searching exhibitions...")
-        vendors = await self.exhibition_scraper.search_all(
-            keyword, expanded, country
-        )
-        print(f"    Total raw results: {len(vendors)}")
+        # Step 2: Search electronica exhibitors
+        print("  Step 2: Searching electronica 2024...")
+        exhibitors = await self.electronica.search(keyword, expanded)
 
-        if not vendors:
+        if not exhibitors:
             return []
 
-        # Apply country filter if specified
+        # Step 3: AI relevance scoring
+        print("  Step 3: Scoring relevance...")
+        exhibitors = await self.llm.score_vendors(keyword, exhibitors)
+
+        # Fallback rule-based score for any unscored entries
+        for ex in exhibitors:
+            if ex.get("match_score", 0) == 0:
+                ex["match_score"] = self._rule_score(ex, keyword)
+
+        # Step 4: Apply country filter if specified
         if country:
             country_lower = country.lower()
             filtered = [
-                v for v in vendors
-                if country_lower in v.get("country", "").lower()
-                or v.get("country", "") == "Global"
+                ex for ex in exhibitors
+                if country_lower in ex.get("address", "").lower()
+                or country_lower in ex.get("name", "").lower()
             ]
-            # Keep all if filter removes too many
             if len(filtered) >= 3:
-                vendors = filtered
+                exhibitors = filtered
 
-        # Step 3: AI relevance scoring
-        print("  Step 3: AI relevance scoring...")
-        vendors = await self.llm.score_vendors(keyword, vendors)
-
-        # Fallback: rule-based scoring for any vendors without LLM scores
-        for v in vendors:
-            if v.get("match_score", 0) == 0:
-                v["match_score"] = self._rule_based_score(v, keyword, country)
-
-        # Step 4: Sort by score, filter low relevance
-        vendors.sort(key=lambda x: x["match_score"], reverse=True)
-        # Remove vendors below 60 if we have enough above
-        high_quality = [v for v in vendors if v["match_score"] >= 60]
-        if len(high_quality) >= 10:
-            vendors = high_quality
-
-        result = vendors[:100]
-        print(f"  Final results: {len(result)} vendors")
+        exhibitors.sort(key=lambda x: x["match_score"], reverse=True)
+        result = [ex for ex in exhibitors if ex["match_score"] >= 50][:50]
+        print(f"  Final results: {len(result)}")
         return result
 
-    def _rule_based_score(
-        self, vendor: Dict[str, Any], keyword: str, country: str
-    ) -> int:
-        """Fallback rule-based scoring when LLM is unavailable"""
-        score = 70
-        name_lower = vendor.get("name", "").lower()
-        desc_lower = vendor.get("description", "").lower()
+    def _rule_score(self, ex: dict[str, Any], keyword: str) -> int:
+        score = 65
         kw = keyword.lower()
+        name_lower = ex.get("name", "").lower()
+        desc_lower = ex.get("description", "").lower()
+        products_text = " ".join(ex.get("products", [])).lower()
 
         if kw in name_lower:
-            score += 15
-        if kw in desc_lower:
+            score += 20
+        if kw in desc_lower or kw in products_text:
+            score += 10
+        if ex.get("email"):
+            score += 5
+        if ex.get("website"):
             score += 5
 
-        supplier_words = [
-            "supplier", "manufacturer", "factory", "producer",
-            "exporter", "exhibitor", "GmbH", "Ltd", "Inc", "Corp",
-        ]
-        for w in supplier_words:
-            if w.lower() in desc_lower or w.lower() in name_lower:
-                score += 3
-
-        if country:
-            vc = vendor.get("country", "").lower()
-            if country.lower() in vc or vc in country.lower():
-                score += 10
-
-        # Bonus for having real exhibition source
-        exhibition = vendor.get("exhibition", "")
-        if exhibition and exhibition != "Trade Show News":
-            score += 5
-
-        return min(99, score)
+        return min(95, score)

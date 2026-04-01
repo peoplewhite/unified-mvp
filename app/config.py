@@ -6,7 +6,7 @@ import os
 
 class Settings:
     """Application settings"""
-    APP_NAME: str = "Unified MVP"
+    APP_NAME: str = "Global Vendor Scout"
     DEBUG: bool = True
     
     # API Keys (optional - app works in mock mode without them)
